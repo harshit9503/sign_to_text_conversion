@@ -1,4 +1,3 @@
-
 import streamlit as st
 import torch
 import torchvision.transforms as transforms
@@ -8,6 +7,7 @@ import cv2
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import av
 import os
+import gdown  # Add this import
 
 # Define the Bottleneck and ResNet50 from original code
 import torch.nn as nn
@@ -86,8 +86,14 @@ class ResNet50(nn.Module):
 # Load model
 @st.cache_resource
 def load_model():
+    model_path = "resnet50_sign_language_mediapipe.pth"
+    # Download the model from Google Drive if it doesn't exist
+    if not os.path.exists(model_path):
+        url = "https://drive.google.com/uc?id=1Ygodl58JHyN8obNu0seK-t6VZ6-5ydu5"
+        gdown.download(url, model_path, quiet=False)
+    
     model = ResNet50(num_classes=26)
-    model.load_state_dict(torch.load("resnet50_sign_language_mediapipe.pth", map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     model.eval()
     return model
 
