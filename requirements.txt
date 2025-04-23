@@ -1,1 +1,7 @@
-streamlit\nstreamlit-webrtc\ntorch\ntorchvision\npillow\nopencv-python\nnumpy
+streamlit
+streamlit-webrtc
+torch
+torchvision
+pillow
+opencv-python
+numpy
