@@ -8,8 +8,6 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import av
 import os
 import gdown
-import mediapipe as mp
-from collections import deque
 
 # Define the Bottleneck and ResNet50 from original code
 import torch.nn as nn
@@ -90,7 +88,7 @@ class ResNet50(nn.Module):
 def load_model():
     model_path = "resnet50_sign_language_mediapipe.pth"
     st.write(f"Checking for model file at: {os.path.abspath(model_path)}")
-    
+
     # Download the model from Google Drive if it doesn't exist
     if not os.path.exists(model_path):
         st.write("Model file not found. Downloading from Google Drive...")
@@ -101,16 +99,17 @@ def load_model():
         except Exception as e:
             st.error(f"Failed to download model file: {str(e)}")
             raise FileNotFoundError(f"Could not download model file: {str(e)}")
-    
+
     # Verify the file exists after download
     if not os.path.exists(model_path):
         st.error(f"Model file not found at {os.path.abspath(model_path)} after download attempt.")
         raise FileNotFoundError(f"Model file not found at {os.path.abspath(model_path)}")
-    
+
     st.write("Loading model...")
     model = ResNet50(num_classes=26)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     model.eval()
+    st.write("Model loaded successfully.")
     return model
 
 model = load_model()
@@ -122,113 +121,40 @@ transform = transforms.Compose([
 ])
 
 # Predict function
-def predict_sign(landmark_image, model, classes, transform):
-    model.eval()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-    
-    # Convert numpy image to PIL Image
-    image = Image.fromarray(cv2.cvtColor(landmark_image, cv2.COLOR_BGR2RGB))
-    image = transform(image).unsqueeze(0).to(device)
-    
+def predict_sign(image_np):
+    image = Image.fromarray(cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
+    image_tensor = transform(image).unsqueeze(0)
     with torch.no_grad():
-        output = model(image)
-        probabilities = torch.softmax(output, dim=1)[0]
-        # Get top 3 predictions for debugging
-        top_probs, top_indices = torch.topk(probabilities, 3)
-        top_predictions = [(classes[idx.item()], prob.item()) for idx, prob in zip(top_indices, top_probs)]
-        # Top prediction
-        top_prob, top_idx = torch.max(probabilities, 0)
-        return classes[top_idx.item()], top_prob.item(), top_predictions
+        output = model(image_tensor)
+        probs = torch.softmax(output, dim=1)
+        top_prob, top_idx = torch.max(probs, 1)
+        return classes[top_idx.item()], top_prob.item()
 
 # Streamlit title and UI
 st.title("🤟 Sign to Text - ASL Recognizer")
 st.markdown("Show a letter in ASL to your webcam, and this app will predict it!")
 
-# Initialize MediaPipe
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7)
-mp_drawing = mp.solutions.drawing_utils
-
 class SignRecognizer(VideoTransformerBase):
     def __init__(self):
         self.last_sign = ""
         self.frame_counter = 0
-        # Smoothing parameters
-        self.smoothing_window = 5  # Number of frames to average over
-        self.prediction_buffer = deque(maxlen=self.smoothing_window)  # Store recent predictions
-        self.confidence_buffer = deque(maxlen=self.smoothing_window)  # Store recent confidences
-        self.confidence_threshold = 0.7  # Only accept predictions with confidence > 0.7
-        self.last_predicted_sign = "None"
-        self.last_confidence = 0.0
-
-    def smooth_prediction(self, predicted_sign, confidence, top_predictions):
-        # Add the current prediction and confidence to the buffers
-        self.prediction_buffer.append(predicted_sign)
-        self.confidence_buffer.append(confidence)
-
-        # If the buffer isn't full yet, return the current prediction
-        if len(self.prediction_buffer) < self.smoothing_window:
-            return predicted_sign, confidence
-
-        # Find the most common prediction in the buffer
-        prediction_counts = {}
-        for sign in self.prediction_buffer:
-            prediction_counts[sign] = prediction_counts.get(sign, 0) + 1
-        most_common_sign = max(prediction_counts, key=prediction_counts.get)
-
-        # Calculate the average confidence for the most common sign
-        avg_confidence = np.mean([conf for sign, conf in zip(self.prediction_buffer, self.confidence_buffer) if sign == most_common_sign])
-
-        # Only update if the average confidence is above the threshold
-        if avg_confidence >= self.confidence_threshold:
-            return most_common_sign, avg_confidence
-        else:
-            return self.last_predicted_sign, self.last_confidence
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
         img = cv2.flip(img, 1)  # Mirror effect
 
-        # Process frame with MediaPipe
-        image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = hands.process(image_rgb)
-
-        # Create a white background for landmarks
+        # Get a square from center
         h, w, _ = img.shape
-        landmark_image = np.ones((h, w, 3), dtype=np.uint8) * 255  # White background
+        side = min(h, w)
+        center_crop = img[(h-side)//2:(h+side)//2, (w-side)//2:(w+side)//2]
 
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                # Draw landmarks on the white background
-                mp_drawing.draw_landmarks(
-                    landmark_image,
-                    hand_landmarks,
-                    mp_hands.HAND_CONNECTIONS,
-                    mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=4),  # Red dots
-                    mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2)  # Green lines
-                )
+        try:
+            predicted_sign, confidence = predict_sign(center_crop)
+            if confidence > 0.7:
+                self.last_sign = f"{predicted_sign} ({confidence:.2f})"
+        except Exception as e:
+            self.last_sign = f"Error: {str(e)}"
 
-                # Predict the sign
-                predicted_sign, confidence, top_predictions = predict_sign(landmark_image, model, classes, transform)
-
-                # Smooth the prediction
-                smoothed_sign, smoothed_confidence = self.smooth_prediction(predicted_sign, confidence, top_predictions)
-
-                # Update the last prediction if the confidence threshold is met
-                if smoothed_confidence >= self.confidence_threshold:
-                    self.last_predicted_sign = smoothed_sign
-                    self.last_confidence = smoothed_confidence
-                    self.last_sign = f"{self.last_predicted_sign} ({self.last_confidence:.2f})"
-                else:
-                    self.last_sign = "Confidence too low"
-
-                # Debug: Display top predictions
-                st.write(f"Top Predictions: {top_predictions}")
-        else:
-            self.last_sign = "No hand detected"
-
-        # Display the prediction on the webcam feed
         cv2.putText(img, f"Prediction: {self.last_sign}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
         return img
 
@@ -245,10 +171,3 @@ webrtc_streamer(
         ]
     }
 )
-
-# Cleanup on app shutdown (optional, Streamlit handles most cleanup)
-def cleanup():
-    hands.close()
-
-import atexit
-atexit.register(cleanup)
