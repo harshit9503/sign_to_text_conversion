@@ -7,7 +7,7 @@ import cv2
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import av
 import os
-import gdown  # Add this import
+import gdown
 
 # Define the Bottleneck and ResNet50 from original code
 import torch.nn as nn
@@ -87,14 +87,29 @@ class ResNet50(nn.Module):
 @st.cache_resource
 def load_model():
     model_path = "resnet50_sign_language_mediapipe.pth"
+    st.write(f"Checking for model file at: {os.path.abspath(model_path)}")  # Debug: Show absolute path
+    
     # Download the model from Google Drive if it doesn't exist
     if not os.path.exists(model_path):
-        url = "https://drive.google.com/uc?id=1Ygodl58JHyN8obNu0seK-t6VZ6-5ydu5"
-        gdown.download(url, model_path, quiet=False)
+        st.write("Model file not found. Downloading from Google Drive...")
+        try:
+            url = "https://drive.google.com/uc?id=1Ygodl58JHyN8obNu0seK-t6VZ6-5ydu5"
+            gdown.download(url, model_path, quiet=False)
+            st.write("Download completed. Verifying file...")
+        except Exception as e:
+            st.error(f"Failed to download model file: {str(e)}")
+            raise FileNotFoundError(f"Could not download model file: {str(e)}")
     
+    # Verify the file exists after download
+    if not os.path.exists(model_path):
+        st.error(f"Model file not found at {os.path.abspath(model_path)} after download attempt.")
+        raise FileNotFoundError(f"Model file not found at {os.path.abspath(model_path)}")
+    
+    st.write("Loading model...")
     model = ResNet50(num_classes=26)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     model.eval()
+    st.write("Model loaded successfully.")
     return model
 
 model = load_model()
