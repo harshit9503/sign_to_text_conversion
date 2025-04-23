@@ -87,7 +87,7 @@ class ResNet50(nn.Module):
 @st.cache_resource
 def load_model():
     model_path = "resnet50_sign_language_mediapipe.pth"
-    st.write(f"Checking for model file at: {os.path.abspath(model_path)}")  # Debug: Show absolute path
+    st.write(f"Checking for model file at: {os.path.abspath(model_path)}")
     
     # Download the model from Google Drive if it doesn't exist
     if not os.path.exists(model_path):
@@ -158,5 +158,16 @@ class SignRecognizer(VideoTransformerBase):
         cv2.putText(img, f"Prediction: {self.last_sign}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
         return img
 
-# Run webcam stream
-webrtc_streamer(key="sign-demo", video_processor_factory=SignRecognizer)
+# Run webcam stream with enhanced STUN and TURN server configuration
+webrtc_streamer(
+    key="sign-demo",
+    video_processor_factory=SignRecognizer,
+    rtc_configuration={
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]},
+            {"urls": ["stun:stun1.l.google.com:19302"]},
+            {"urls": ["stun:stun2.l.google.com:19302"]},
+            {"urls": ["turn:turn.anyfirewall.com:443?transport=tcp"], "username": "webrtc", "credential": "webrtc"}
+        ]
+    }
+)
